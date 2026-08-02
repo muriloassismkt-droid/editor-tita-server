@@ -13,6 +13,8 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
+import { pipeline } from "stream/promises";
+import { Readable } from "stream";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMP_DIR = path.join(__dirname, "tmp");
@@ -30,12 +32,12 @@ if (!SERVER_SECRET) {
   console.warn("[AVISO] Configure a variável de ambiente SERVER_SECRET.");
 }
 
-// ==== FUNÇÃO: baixa um arquivo de uma URL pra um caminho local ====
+// ==== FUNÇÃO: baixa um arquivo de uma URL direto pro disco (sem carregar
+// tudo na memória de uma vez - importante no plano grátis, que tem 512MB) ====
 async function downloadFile(url, destPath) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Falha ao baixar arquivo: ${url} (status ${res.status})`);
-  const buffer = Buffer.from(await res.arrayBuffer());
-  fs.writeFileSync(destPath, buffer);
+  await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(destPath));
 }
 
 // ==== FUNÇÃO: roda o comando FFmpeg ====
@@ -52,6 +54,7 @@ function runFFmpeg(watermarkPath, videoPath, outputPath) {
       "-map", "1:a?",
       "-c:v", "libx264",
       "-preset", "veryfast",
+      "-threads", "1",
       "-c:a", "aac",
       "-shortest",
       outputPath,
