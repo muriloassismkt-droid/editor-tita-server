@@ -49,7 +49,7 @@ function runFFmpeg(watermarkPath, videoPath, outputPath) {
       "-i", watermarkPath,
       "-i", videoPath,
       "-filter_complex",
-      "[0:v]scale=1080:1920,setsar=1[bg];[1:v]scale=810:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1[outv]",
+      "[0:v]scale=720:1280,setsar=1[bg];[1:v]scale=540:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1[outv]",
       "-map", "[outv]",
       "-map", "1:a?",
       "-c:v", "libx264",
@@ -79,6 +79,16 @@ function runFFmpeg(watermarkPath, videoPath, outputPath) {
   });
 }
 
+// ==== FILA INTERNA: garante que só 1 vídeo é processado por vez, mesmo que
+// várias requisições cheguem juntas. Isso evita estourar os 512MB do plano
+// grátis quando a Lovable dispara vários itens da fila ao mesmo tempo. ====
+let queue = Promise.resolve();
+function enqueue(task) {
+  const result = queue.then(task, task);
+  queue = result.catch(() => {}); // não deixa um erro travar a fila pros próximos
+  return result;
+}
+
 // ==== ENDPOINT PRINCIPAL ====
 // Recebe { videoUrl }, devolve o VÍDEO FINAL diretamente no corpo da resposta
 // (Content-Type: video/mp4), pronto pra Lovable salvar onde quiser.
@@ -104,11 +114,15 @@ app.post("/process", async (req, res) => {
   const outputPath = path.join(TMP_DIR, `output-${id}.mp4`);
 
   try {
-    console.log(`[${id}] Baixando vídeo original...`);
-    await downloadFile(videoUrl, videoPath);
+    // enqueue garante que este processamento só começa depois que o
+    // anterior terminar, mesmo que várias chamadas cheguem ao mesmo tempo
+    await enqueue(async () => {
+      console.log(`[${id}] Baixando vídeo original...`);
+      await downloadFile(videoUrl, videoPath);
 
-    console.log(`[${id}] Rodando FFmpeg...`);
-    await runFFmpeg(WATERMARK_PATH, videoPath, outputPath);
+      console.log(`[${id}] Rodando FFmpeg...`);
+      await runFFmpeg(WATERMARK_PATH, videoPath, outputPath);
+    });
 
     console.log(`[${id}] Enviando vídeo final na resposta...`);
     res.setHeader("Content-Type", "video/mp4");
